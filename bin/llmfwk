@@ -55,10 +55,14 @@ prompt_choice() {
         fi
         case "$key" in
             $'\033[A'|k) # Up arrow or k
-                ((selected > 0)) && ((selected--))
+                if [ "$selected" -gt 0 ]; then
+                    selected=$((selected - 1))
+                fi
                 ;;
             $'\033[B'|j) # Down arrow or j
-                ((selected < count - 1)) && ((selected++))
+                if [ "$selected" -lt $((count - 1)) ]; then
+                    selected=$((selected + 1))
+                fi
                 ;;
             '') # Enter
                 break
