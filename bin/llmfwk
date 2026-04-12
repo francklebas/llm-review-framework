@@ -35,9 +35,12 @@ prompt_choice() {
     done
     while true; do
         printf "${BOLD}Choice [1-%d]:${NC} " "$count" >/dev/tty
-        # Strip escape sequences (arrow keys etc.) from input
-        read -r choice </dev/tty
-        choice=$(echo "$choice" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/[^0-9]//g')
+        # Read silently to prevent escape sequences showing on screen
+        read -rs choice </dev/tty
+        # Strip anything that isn't a digit
+        choice=$(printf '%s' "$choice" | tr -cd '0-9')
+        # Echo back the clean input
+        printf "%s\n" "$choice" >/dev/tty
         if [ -n "$choice" ] && [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le "$count" ] 2>/dev/null; then
             break
         fi
