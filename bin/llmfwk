@@ -28,29 +28,33 @@ prompt_choice() {
     local options=("$@")
     local selected=0
     local count=${#options[@]}
+    local first_draw=1
+    local total_lines=$((count + 1)) # question line + option lines
 
     # Hide cursor
     tput civis 2>/dev/null || true
 
     while true; do
-        # Move cursor up to redraw (except first draw)
-        if [ "$selected" -ge 0 ] 2>/dev/null; then
-            printf "\033[%dA" "$((count + 1))" 2>/dev/null || true
+        # Move cursor up to redraw (skip on first draw)
+        if [ "$first_draw" -eq 0 ]; then
+            printf "\033[%dA" "$total_lines" 2>/dev/null || true
         fi
+        first_draw=0
 
-        echo -e "\n${BOLD}${question}${NC}"
+        # Draw question + options (no leading newline, use \r to reset column)
+        printf "\r\033[K${BOLD}%s${NC}\n" "$question"
         for i in "${!options[@]}"; do
             if [ "$i" -eq "$selected" ]; then
-                echo -e "  ${CYAN}> ${options[$i]}${NC}"
+                printf "\r\033[K  ${CYAN}> %s${NC}\n" "${options[$i]}"
             else
-                echo -e "    ${DIM}${options[$i]}${NC}"
+                printf "\r\033[K    ${DIM}%s${NC}\n" "${options[$i]}"
             fi
         done
 
         # Read keypress (arrow keys send 3-char escape sequence: \033 [ A/B)
-        IFS= read -rsn1 key
+        IFS= read -rsn1 key </dev/tty
         if [[ "$key" == $'\033' ]]; then
-            IFS= read -rsn2 -t 0.1 rest
+            IFS= read -rsn2 -t 0.1 rest </dev/tty
             key+="$rest"
         fi
         case "$key" in
