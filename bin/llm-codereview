@@ -1,0 +1,151 @@
+#!/bin/bash
+# llm-codereview — Pre-commit hook for LLM-powered code review
+# Part of llm-review-framework (AGPL-3.0)
+# Output: markdown readable by both developer and editor LLM assistant.
+
+set -euo pipefail
+
+LLMFWK_HOME="${LLMFWK_HOME:-$HOME/.llmfwk}"
+CONFIG_FILE=".llm-review.yaml"
+
+# --- Parse .llm-review.yaml (lightweight, no yq dependency) ---
+parse_yaml() {
+    local key="$1" file="$2"
+    grep "^${key}:" "$file" 2>/dev/null | sed "s/^${key}:[[:space:]]*//" | sed 's/^["'"'"']//' | sed 's/["'"'"']$//' | sed 's/#.*//' | xargs
+}
+
+# --- Resolve config ---
+PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+if [ -z "$PROJECT_ROOT" ]; then
+    echo "[llm-codereview] not inside a git repository"
+    exit 0
+fi
+
+PROJECT_NAME=$(basename "$PROJECT_ROOT")
+
+if [ -f "$PROJECT_ROOT/$CONFIG_FILE" ]; then
+    PROVIDER=$(parse_yaml "provider" "$PROJECT_ROOT/$CONFIG_FILE")
+    MODEL=$(parse_yaml "model" "$PROJECT_ROOT/$CONFIG_FILE")
+    PROMPTS_DIR=$(parse_yaml "prompts_dir" "$PROJECT_ROOT/$CONFIG_FILE")
+    CUSTOM_CMD=$(parse_yaml "custom_cmd" "$PROJECT_ROOT/$CONFIG_FILE")
+fi
+
+PROVIDER="${PROVIDER:-gemini}"
+MODEL="${MODEL:-gemini-2.5-flash-lite}"
+PROMPTS_DIR="${PROMPTS_DIR:-$LLMFWK_HOME/prompts/projects}"
+
+# Expand ~ in prompts_dir
+PROMPTS_DIR="${PROMPTS_DIR/#\~/$HOME}"
+
+# --- Resolve prompt files (project-specific → base fallback) ---
+if [ -f "$PROMPTS_DIR/$PROJECT_NAME/codereview-context.md" ]; then
+    CONTEXT_FILE="$PROMPTS_DIR/$PROJECT_NAME/codereview-context.md"
+else
+    CONTEXT_FILE="$LLMFWK_HOME/prompts/base/codereview-context.md"
+fi
+
+if [ -f "$PROMPTS_DIR/$PROJECT_NAME/codereview-guidelines.md" ]; then
+    GUIDELINES_FILE="$PROMPTS_DIR/$PROJECT_NAME/codereview-guidelines.md"
+else
+    GUIDELINES_FILE="$LLMFWK_HOME/prompts/base/codereview-guidelines.md"
+fi
+
+# --- Files passed by pre-commit ---
+if [ $# -eq 0 ]; then
+    exit 0
+fi
+
+# --- Staged diff only ---
+DIFF=$(git diff --cached --no-color -- "$@" 2>/dev/null)
+
+if [ -z "$DIFF" ]; then
+    exit 0
+fi
+
+DIFF_TRUNCATED=$(echo "$DIFF" | head -c 12000)
+
+# --- Load prompt components ---
+CONTEXT=$( [ -f "$CONTEXT_FILE" ] && head -c 4000 "$CONTEXT_FILE" || echo "No project context available.")
+GUIDELINES=$( [ -f "$GUIDELINES_FILE" ] && head -c 2500 "$GUIDELINES_FILE" || echo "No review guidelines available.")
+
+# --- Build prompt ---
+PROMPT=$(cat <<PROMPT_END
+You are a senior technical code reviewer. Analyze the diff below.
+
+RULES:
+- Only flag concrete issues that require a fix
+- For each issue: file, line number, description, corrective diff
+- No summary, no compliments, no filler
+- If nothing to report, respond only: "LGTM"
+- Severity order: security > bug > a11y > i18n > perf > style
+
+OUTPUT FORMAT (strict):
+
+## file.ext
+
+**[category]** Issue description (line N)
+\`\`\`diff
+- current code
++ proposed fix
+\`\`\`
+
+If nothing to report, respond only: LGTM
+
+--- PROJECT CONTEXT ---
+$CONTEXT
+
+--- REVIEW GUIDELINES ---
+$GUIDELINES
+
+--- DIFF TO ANALYZE ---
+$DIFF_TRUNCATED
+PROMPT_END
+)
+
+# --- Provider dispatch ---
+call_llm() {
+    case "$PROVIDER" in
+        gemini)
+            gemini --model "$MODEL" -p "$PROMPT" 2>&1
+            ;;
+        ollama)
+            ollama run "$MODEL" "$PROMPT" 2>&1
+            ;;
+        claude)
+            echo "$PROMPT" | claude -p --model "$MODEL" 2>&1
+            ;;
+        openai)
+            echo "$PROMPT" | openai api chat.completions.create -m "$MODEL" -g user 2>&1
+            ;;
+        mistral)
+            mistral chat --model "$MODEL" -m "$PROMPT" 2>&1
+            ;;
+        groq)
+            groq chat completions create --model "$MODEL" -m "$PROMPT" 2>&1
+            ;;
+        copilot)
+            echo "$PROMPT" | gh copilot explain 2>&1
+            ;;
+        custom)
+            eval "$CUSTOM_CMD" <<< "$PROMPT" 2>&1
+            ;;
+        *)
+            echo "[llm-codereview] unknown provider: $PROVIDER"
+            return 1
+            ;;
+    esac
+}
+
+REVIEW=$(call_llm)
+
+if [ $? -ne 0 ]; then
+    echo "[llm-codereview] review unavailable ($PROVIDER)"
+    exit 0
+fi
+
+echo ""
+echo "[llm-codereview] $PROVIDER/$MODEL | files: $*"
+echo ""
+echo "$REVIEW"
+
+exit 0

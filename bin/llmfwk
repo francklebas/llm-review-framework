@@ -1,0 +1,468 @@
+#!/bin/bash
+# llmfwk — CLI for llm-review-framework
+# Part of llm-review-framework (AGPL-3.0)
+
+set -euo pipefail
+
+LLMFWK_HOME="${LLMFWK_HOME:-$HOME/.llmfwk}"
+VERSION="0.1.0"
+
+# --- Colors ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# --- Helpers ---
+info()    { echo -e "${CYAN}>${NC} $*"; }
+success() { echo -e "${GREEN}✓${NC} $*"; }
+warn()    { echo -e "${YELLOW}!${NC} $*"; }
+error()   { echo -e "${RED}✗${NC} $*" >&2; }
+
+prompt_choice() {
+    local question="$1"
+    shift
+    local options=("$@")
+    local selected=0
+    local count=${#options[@]}
+
+    # Hide cursor
+    tput civis 2>/dev/null || true
+
+    while true; do
+        # Move cursor up to redraw (except first draw)
+        if [ "$selected" -ge 0 ] 2>/dev/null; then
+            printf "\033[%dA" "$((count + 1))" 2>/dev/null || true
+        fi
+
+        echo -e "\n${BOLD}${question}${NC}"
+        for i in "${!options[@]}"; do
+            if [ "$i" -eq "$selected" ]; then
+                echo -e "  ${CYAN}> ${options[$i]}${NC}"
+            else
+                echo -e "    ${DIM}${options[$i]}${NC}"
+            fi
+        done
+
+        # Read single keypress
+        IFS= read -rsn1 key
+        case "$key" in
+            A|k) # Up arrow or k
+                ((selected > 0)) && ((selected--))
+                ;;
+            B|j) # Down arrow or j
+                ((selected < count - 1)) && ((selected++))
+                ;;
+            '') # Enter
+                break
+                ;;
+        esac
+    done
+
+    # Show cursor
+    tput cnorm 2>/dev/null || true
+
+    CHOICE_INDEX=$selected
+    CHOICE="${options[$selected]}"
+}
+
+prompt_input() {
+    local question="$1"
+    local default="$2"
+    local result
+
+    if [ -n "$default" ]; then
+        echo -en "${BOLD}${question}${NC} ${DIM}[${default}]${NC}: "
+    else
+        echo -en "${BOLD}${question}${NC}: "
+    fi
+    read -r result
+    echo "${result:-$default}"
+}
+
+prompt_yn() {
+    local question="$1"
+    local default="${2:-y}"
+    local result
+
+    if [ "$default" = "y" ]; then
+        echo -en "${BOLD}${question}${NC} ${DIM}[Y/n]${NC}: "
+    else
+        echo -en "${BOLD}${question}${NC} ${DIM}[y/N]${NC}: "
+    fi
+    read -r result
+    result="${result:-$default}"
+    [[ "$result" =~ ^[Yy] ]]
+}
+
+check_command() {
+    command -v "$1" &>/dev/null
+}
+
+detect_os() {
+    case "$(uname -s)" in
+        Linux*)
+            if [ -f /etc/arch-release ]; then echo "arch"
+            elif [ -f /etc/debian_version ]; then echo "debian"
+            elif [ -f /etc/fedora-release ]; then echo "fedora"
+            else echo "linux"
+            fi
+            ;;
+        Darwin*) echo "macos" ;;
+        *) echo "unknown" ;;
+    esac
+}
+
+detect_shell_rc() {
+    case "$(basename "${SHELL:-/bin/bash}")" in
+        zsh)  echo "$HOME/.zshrc" ;;
+        bash)
+            if [ -f "$HOME/.bash_profile" ]; then
+                echo "$HOME/.bash_profile"
+            else
+                echo "$HOME/.bashrc"
+            fi
+            ;;
+        fish) echo "$HOME/.config/fish/config.fish" ;;
+        *)    echo "$HOME/.profile" ;;
+    esac
+}
+
+export_to_rc() {
+    local rc_file
+    rc_file=$(detect_shell_rc)
+    local marker="# llm-review-framework"
+
+    if grep -q "$marker" "$rc_file" 2>/dev/null; then
+        success "Environment already configured in $rc_file"
+        return 0
+    fi
+
+    if prompt_yn "Add llmfwk to PATH in $rc_file?"; then
+        {
+            echo ""
+            echo "$marker"
+            echo "export LLMFWK_HOME=\"\$HOME/.llmfwk\""
+            echo "export PATH=\"\$LLMFWK_HOME/bin:\$PATH\""
+        } >> "$rc_file"
+        success "Added to $rc_file"
+        warn "Run: source $rc_file (or restart your terminal)"
+    else
+        warn "Skipped. Add manually:"
+        echo "  export LLMFWK_HOME=\"\$HOME/.llmfwk\""
+        echo "  export PATH=\"\$LLMFWK_HOME/bin:\$PATH\""
+    fi
+}
+
+# --- Provider definitions ---
+declare -A PROVIDER_CMDS=(
+    [gemini]="gemini"
+    [ollama]="ollama"
+    [claude]="claude"
+    [openai]="openai"
+    [mistral]="mistral"
+    [groq]="groq"
+    [copilot]="gh"
+    [custom]=""
+)
+
+declare -A PROVIDER_LABELS=(
+    [gemini]="Google Gemini CLI"
+    [ollama]="Ollama (local LLM)"
+    [claude]="Anthropic Claude CLI"
+    [openai]="OpenAI CLI"
+    [mistral]="Mistral CLI"
+    [groq]="Groq CLI"
+    [copilot]="GitHub Copilot (gh copilot)"
+    [custom]="Custom command"
+)
+
+provider_models() {
+    case "$1" in
+        gemini)
+            echo "gemini-2.5-flash-lite|fast, free tier"
+            echo "gemini-2.5-flash|balanced"
+            echo "gemini-2.5-pro|best quality"
+            ;;
+        ollama)
+            echo "llama3.1|Meta Llama 3.1 8B"
+            echo "codellama|Code Llama"
+            echo "deepseek-coder-v2|DeepSeek Coder V2"
+            echo "qwen2.5-coder|Qwen 2.5 Coder"
+            ;;
+        claude)
+            echo "sonnet|Claude Sonnet (recommended)"
+            echo "opus|Claude Opus (most capable)"
+            echo "haiku|Claude Haiku (fastest)"
+            ;;
+        openai)
+            echo "gpt-4o|GPT-4o (recommended)"
+            echo "gpt-4o-mini|GPT-4o Mini (fast)"
+            echo "o3-mini|o3-mini (reasoning)"
+            ;;
+        mistral)
+            echo "mistral-large-latest|Mistral Large"
+            echo "mistral-small-latest|Mistral Small (fast)"
+            echo "codestral-latest|Codestral (code-focused)"
+            ;;
+        groq)
+            echo "llama-3.3-70b-versatile|Llama 3.3 70B"
+            echo "llama-3.1-8b-instant|Llama 3.1 8B (fast)"
+            echo "deepseek-r1-distill-llama-70b|DeepSeek R1 70B"
+            ;;
+        copilot)
+            echo "default|GitHub Copilot default model"
+            ;;
+    esac
+}
+
+precommit_install_options() {
+    local os
+    os=$(detect_os)
+    case "$os" in
+        arch)   echo "pacman -S python-pre-commit|pacman (Arch)" ;;
+        debian) echo "pip install pre-commit|pip" ;;
+        fedora) echo "pip install pre-commit|pip" ;;
+        macos)  echo "brew install pre-commit|Homebrew"; echo "pip install pre-commit|pip" ;;
+        *)      echo "pip install pre-commit|pip" ;;
+    esac
+}
+
+provider_install_hint() {
+    local provider="$1"
+    case "$provider" in
+        gemini)  echo "pip install google-generativeai" ;;
+        ollama)  echo "curl -fsSL https://ollama.com/install.sh | sh" ;;
+        claude)  echo "npm install -g @anthropic-ai/claude-code" ;;
+        openai)  echo "pip install openai" ;;
+        mistral) echo "pip install mistralai" ;;
+        groq)    echo "pip install groq" ;;
+        copilot) echo "gh extension install github/gh-copilot" ;;
+    esac
+}
+
+# ============================================================
+# Commands
+# ============================================================
+
+cmd_init() {
+    echo ""
+    echo -e "${BOLD}llmfwk init${NC} — Configure LLM code review for this project"
+    echo ""
+
+    # Check we're in a git repo
+    local project_root
+    project_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+    if [ -z "$project_root" ]; then
+        error "Not inside a git repository. Run this from your project root."
+        exit 1
+    fi
+    local project_name
+    project_name=$(basename "$project_root")
+    info "Project: $project_name ($project_root)"
+
+    # --- Step 1: Provider ---
+    echo ""
+    local providers=("gemini        — Google Gemini CLI" "ollama        — Ollama (local LLM)" "claude        — Anthropic Claude CLI" "openai        — OpenAI CLI" "mistral       — Mistral CLI" "groq          — Groq CLI" "copilot       — GitHub Copilot" "custom        — Custom command")
+    local provider_keys=(gemini ollama claude openai mistral groq copilot custom)
+
+    prompt_choice "Select your LLM provider:" "${providers[@]}"
+    local provider="${provider_keys[$CHOICE_INDEX]}"
+    success "Provider: $provider"
+
+    # --- Step 2: Check provider CLI ---
+    local custom_cmd=""
+    if [ "$provider" = "custom" ]; then
+        custom_cmd=$(prompt_input "Enter the command to call your LLM (receives prompt on stdin)" "")
+    else
+        local cmd="${PROVIDER_CMDS[$provider]}"
+        if [ -n "$cmd" ] && ! check_command "$cmd"; then
+            echo ""
+            warn "$cmd not found on this system."
+            local hint
+            hint=$(provider_install_hint "$provider")
+            if [ -n "$hint" ]; then
+                if prompt_yn "Install with: $hint ?"; then
+                    eval "$hint"
+                else
+                    warn "Skipped. Install $cmd manually before using llm-codereview."
+                fi
+            fi
+        else
+            success "$cmd found"
+        fi
+    fi
+
+    # --- Step 3: Model ---
+    local model=""
+    if [ "$provider" != "custom" ] && [ "$provider" != "copilot" ]; then
+        echo ""
+        local model_lines=()
+        local model_keys=()
+        while IFS='|' read -r key desc; do
+            model_lines+=("$key — $desc")
+            model_keys+=("$key")
+        done < <(provider_models "$provider")
+
+        if [ ${#model_lines[@]} -gt 0 ]; then
+            prompt_choice "Select a model:" "${model_lines[@]}"
+            model="${model_keys[$CHOICE_INDEX]}"
+        else
+            model=$(prompt_input "Enter model ID" "")
+        fi
+        success "Model: $model"
+    fi
+
+    # --- Step 4: Pre-commit ---
+    echo ""
+    if check_command pre-commit; then
+        success "pre-commit found"
+    else
+        warn "pre-commit not found."
+        local install_options=()
+        local install_cmds=()
+        while IFS='|' read -r cmd desc; do
+            install_options+=("$desc")
+            install_cmds+=("$cmd")
+        done < <(precommit_install_options)
+        install_options+=("Skip (I'll install it myself)")
+        install_cmds+=("")
+
+        prompt_choice "Install pre-commit?" "${install_options[@]}"
+        local install_cmd="${install_cmds[$CHOICE_INDEX]}"
+        if [ -n "$install_cmd" ]; then
+            eval "$install_cmd"
+        else
+            warn "Skipped. Install pre-commit manually before committing."
+        fi
+    fi
+
+    # --- Step 5: Project prompts ---
+    echo ""
+    local prompts_dir=""
+    local use_project_prompts=false
+
+    if prompt_yn "Set up project-specific prompts? (No = use base prompts: SOLID, DRY, security...)"; then
+        use_project_prompts=true
+        prompts_dir=$(prompt_input "Prompts directory" "$LLMFWK_HOME/prompts/projects")
+        prompts_dir="${prompts_dir/#\~/$HOME}"
+
+        local project_prompts_dir="$prompts_dir/$project_name"
+        if [ -d "$project_prompts_dir" ]; then
+            success "Project prompts already exist at $project_prompts_dir"
+        else
+            mkdir -p "$project_prompts_dir"
+            cp "$LLMFWK_HOME/prompts/templates/codereview-context.md" "$project_prompts_dir/"
+            cp "$LLMFWK_HOME/prompts/templates/codereview-guidelines.md" "$project_prompts_dir/"
+            success "Templates copied to $project_prompts_dir/"
+            info "Edit these files to add your project-specific context."
+        fi
+    fi
+
+    # --- Step 6: Write config files ---
+    echo ""
+    info "Writing configuration..."
+
+    # .llm-review.yaml
+    local yaml_file="$project_root/.llm-review.yaml"
+    {
+        echo "# llm-review-framework configuration"
+        echo "# https://github.com/francklebas/llm-review-framework"
+        echo "provider: $provider"
+        [ -n "$model" ] && echo "model: $model"
+        if [ "$use_project_prompts" = true ]; then
+            # Store with ~ for portability
+            local portable_dir="${prompts_dir/$HOME/\~}"
+            echo "prompts_dir: $portable_dir"
+        fi
+        [ -n "$custom_cmd" ] && echo "custom_cmd: $custom_cmd"
+    } > "$yaml_file"
+    success "Created $yaml_file"
+
+    # .pre-commit-config.yaml
+    local precommit_file="$project_root/.pre-commit-config.yaml"
+    if [ -f "$precommit_file" ] && grep -q "llm-codereview" "$precommit_file"; then
+        success ".pre-commit-config.yaml already has llm-codereview hook"
+    else
+        if [ -f "$precommit_file" ]; then
+            # Append to existing config
+            cat >> "$precommit_file" <<'HOOK'
+
+  - repo: local
+    hooks:
+      - id: llm-codereview
+        name: LLM Code Review
+        entry: llm-codereview
+        language: system
+        pass_filenames: true
+        stages: [pre-commit]
+HOOK
+            success "Added llm-codereview hook to $precommit_file"
+        else
+            cat > "$precommit_file" <<'HOOK'
+repos:
+  - repo: local
+    hooks:
+      - id: llm-codereview
+        name: LLM Code Review
+        entry: llm-codereview
+        language: system
+        pass_filenames: true
+        stages: [pre-commit]
+HOOK
+            success "Created $precommit_file"
+        fi
+    fi
+
+    # Environment
+    echo ""
+    export_to_rc
+
+    # --- Done ---
+    echo ""
+    echo -e "${GREEN}${BOLD}Done!${NC} LLM code review is configured for ${BOLD}$project_name${NC}."
+    echo ""
+    echo "  Next steps:"
+    if [ "$use_project_prompts" = true ]; then
+        echo "    1. Edit your prompts in $prompts_dir/$project_name/"
+        echo "    2. Stage some files and commit — the review will run automatically"
+    else
+        echo "    1. Stage some files and commit — the review will run automatically"
+    fi
+    echo ""
+    echo "  Manual test:"
+    echo "    git add <file> && pre-commit run llm-codereview"
+    echo ""
+}
+
+cmd_version() {
+    echo "llmfwk $VERSION"
+}
+
+cmd_help() {
+    echo ""
+    echo -e "${BOLD}llmfwk${NC} — LLM Code Review Framework"
+    echo ""
+    echo "Usage: llmfwk <command>"
+    echo ""
+    echo "Commands:"
+    echo "  init       Configure LLM code review for the current project"
+    echo "  version    Show version"
+    echo "  help       Show this help"
+    echo ""
+}
+
+# --- Main ---
+case "${1:-help}" in
+    init)    cmd_init ;;
+    version) cmd_version ;;
+    help)    cmd_help ;;
+    *)
+        error "Unknown command: $1"
+        cmd_help
+        exit 1
+        ;;
+esac
