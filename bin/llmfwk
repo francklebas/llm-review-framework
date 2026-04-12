@@ -28,26 +28,23 @@ prompt_choice() {
     local options=("$@")
     local selected=0
     local count=${#options[@]}
-    local first_draw=1
-    local total_lines=$((count + 1)) # question line + option lines
 
-    # Hide cursor
+    # Hide cursor, print question, save cursor position
     tput civis 2>/dev/null || true
+    printf "${BOLD}%s${NC}\n" "$question"
+    tput sc 2>/dev/null || true
 
     while true; do
-        # Move cursor up to redraw (skip on first draw)
-        if [ "$first_draw" -eq 0 ]; then
-            printf "\033[%dA" "$total_lines" 2>/dev/null || true
-        fi
-        first_draw=0
+        # Restore cursor to saved position (right after question line)
+        tput rc 2>/dev/null || true
 
-        # Draw question + options (no leading newline, use \r to reset column)
-        printf "\r\033[K${BOLD}%s${NC}\n" "$question"
+        # Draw options, clearing each line first
         for i in "${!options[@]}"; do
+            tput el 2>/dev/null || true
             if [ "$i" -eq "$selected" ]; then
-                printf "\r\033[K  ${CYAN}> %s${NC}\n" "${options[$i]}"
+                printf "  ${CYAN}> %s${NC}\n" "${options[$i]}"
             else
-                printf "\r\033[K    ${DIM}%s${NC}\n" "${options[$i]}"
+                printf "    ${DIM}%s${NC}\n" "${options[$i]}"
             fi
         done
 
