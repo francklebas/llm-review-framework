@@ -1,14 +1,12 @@
 #!/bin/bash
 # llm-review-framework installer
-# Usage: curl -fsSL https://francklebas.com/llm-review | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/francklebas/llm-review-framework/main/install.sh | bash
 #
 # AGPL-3.0 — https://github.com/francklebas/llm-review-framework
 
 set -euo pipefail
 
-REPO="francklebas/llm-review-framework"
-BRANCH="main"
-BASE_URL="https://raw.githubusercontent.com/$REPO/$BRANCH"
+REPO="https://github.com/francklebas/llm-review-framework.git"
 INSTALL_DIR="$HOME/.llmfwk"
 
 # --- Colors ---
@@ -25,11 +23,6 @@ warn()    { echo -e "${YELLOW}!${NC} $*"; }
 error()   { echo -e "${RED}✗${NC} $*" >&2; }
 
 # --- Check dependencies ---
-if ! command -v curl &>/dev/null; then
-    error "curl is required but not installed."
-    exit 1
-fi
-
 if ! command -v git &>/dev/null; then
     error "git is required but not installed."
     exit 1
@@ -41,36 +34,29 @@ echo -e "${BOLD}llm-review-framework${NC} installer"
 echo -e "${CYAN}LLM-powered code review as a pre-commit hook${NC}"
 echo ""
 
-# --- Clean previous install ---
+# --- Clean previous install (preserve user prompts) ---
 if [ -d "$INSTALL_DIR/bin" ] || [ -d "$INSTALL_DIR/prompts/base" ] || [ -d "$INSTALL_DIR/prompts/templates" ]; then
     info "Removing previous installation..."
     rm -rf "$INSTALL_DIR/bin" "$INSTALL_DIR/prompts/base" "$INSTALL_DIR/prompts/templates"
 fi
 
-# --- Create directory structure ---
-info "Installing to $INSTALL_DIR"
+# --- Clone repo to temp dir ---
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
 
+info "Downloading..."
+git clone --depth 1 --quiet "$REPO" "$TMPDIR/llm-review-framework"
+
+# --- Copy files ---
 mkdir -p "$INSTALL_DIR/bin"
 mkdir -p "$INSTALL_DIR/prompts/base"
 mkdir -p "$INSTALL_DIR/prompts/templates"
 mkdir -p "$INSTALL_DIR/prompts/projects"
 
-# --- Download files ---
-info "Downloading..."
-
-download() {
-    local src="$1" dest="$2"
-    curl -fsSL "$BASE_URL/$src" -o "$dest"
-}
-
-download "bin/llmfwk"         "$INSTALL_DIR/bin/llmfwk"
-download "bin/llm-codereview" "$INSTALL_DIR/bin/llm-codereview"
-
-download "prompts/base/codereview-context.md"    "$INSTALL_DIR/prompts/base/codereview-context.md"
-download "prompts/base/codereview-guidelines.md" "$INSTALL_DIR/prompts/base/codereview-guidelines.md"
-
-download "prompts/templates/codereview-context.md"    "$INSTALL_DIR/prompts/templates/codereview-context.md"
-download "prompts/templates/codereview-guidelines.md" "$INSTALL_DIR/prompts/templates/codereview-guidelines.md"
+cp "$TMPDIR/llm-review-framework/bin/llmfwk"         "$INSTALL_DIR/bin/llmfwk"
+cp "$TMPDIR/llm-review-framework/bin/llm-codereview"  "$INSTALL_DIR/bin/llm-codereview"
+cp "$TMPDIR/llm-review-framework/prompts/base/"*      "$INSTALL_DIR/prompts/base/"
+cp "$TMPDIR/llm-review-framework/prompts/templates/"* "$INSTALL_DIR/prompts/templates/"
 
 chmod +x "$INSTALL_DIR/bin/llmfwk"
 chmod +x "$INSTALL_DIR/bin/llm-codereview"
