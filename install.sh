@@ -41,6 +41,12 @@ echo -e "${BOLD}llm-review-framework${NC} installer"
 echo -e "${CYAN}LLM-powered code review as a pre-commit hook${NC}"
 echo ""
 
+# --- Clean previous install ---
+if [ -d "$INSTALL_DIR/bin" ] || [ -d "$INSTALL_DIR/prompts/base" ] || [ -d "$INSTALL_DIR/prompts/templates" ]; then
+    info "Removing previous installation..."
+    rm -rf "$INSTALL_DIR/bin" "$INSTALL_DIR/prompts/base" "$INSTALL_DIR/prompts/templates"
+fi
+
 # --- Create directory structure ---
 info "Installing to $INSTALL_DIR"
 
