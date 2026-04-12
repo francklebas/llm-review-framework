@@ -26,24 +26,68 @@ prompt_choice() {
     local question="$1"
     shift
     local options=("$@")
+    local selected=0
     local count=${#options[@]}
-    local choice
 
+    tput civis 2>/dev/null >/dev/tty || true
+
+    # Print question once
     printf "\n${BOLD}%s${NC}\n" "$question" >/dev/tty
+
+    # Initial draw
     for i in "${!options[@]}"; do
-        printf "  ${CYAN}%d)${NC} %s\n" "$((i + 1))" "${options[$i]}" >/dev/tty
-    done
-    printf "${BOLD}Choice [1-%d]:${NC} " "$count" >/dev/tty
-    while true; do
-        # Single char, silent — arrow keys and non-digits are silently ignored
-        read -rsn1 choice </dev/tty
-        if [[ "$choice" =~ ^[0-9]$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "$count" ]; then
-            printf "%s\n" "$choice" >/dev/tty
-            break
+        if [ "$i" -eq "$selected" ]; then
+            printf "  ${CYAN}> %s${NC}\n" "${options[$i]}" >/dev/tty
+        else
+            printf "    %s\n" "${options[$i]}" >/dev/tty
         fi
     done
 
-    CHOICE_INDEX=$((choice - 1))
+    while true; do
+        IFS= read -rsn1 key </dev/tty
+
+        # Arrow keys: \033 [ A/B — read remaining 2 chars
+        if [[ "$key" == $'\033' ]]; then
+            IFS= read -rsn1 -t 0.1 k2 </dev/tty || true
+            IFS= read -rsn1 -t 0.1 k3 </dev/tty || true
+            key="${key}${k2}${k3}"
+        fi
+
+        local changed=0
+        case "$key" in
+            $'\033[A'|k)
+                if [ "$selected" -gt 0 ]; then
+                    selected=$((selected - 1))
+                    changed=1
+                fi
+                ;;
+            $'\033[B'|j)
+                if [ "$selected" -lt $((count - 1)) ]; then
+                    selected=$((selected + 1))
+                    changed=1
+                fi
+                ;;
+            '')
+                break
+                ;;
+        esac
+
+        if [ "$changed" -eq 1 ]; then
+            # Move cursor up to first option line
+            printf "\033[%dA" "$count" >/dev/tty
+            for i in "${!options[@]}"; do
+                if [ "$i" -eq "$selected" ]; then
+                    printf "\r\033[K  ${CYAN}> %s${NC}\n" "${options[$i]}" >/dev/tty
+                else
+                    printf "\r\033[K    %s\n" "${options[$i]}" >/dev/tty
+                fi
+            done
+        fi
+    done
+
+    tput cnorm 2>/dev/null >/dev/tty || true
+
+    CHOICE_INDEX=$selected
     CHOICE="${options[$CHOICE_INDEX]}"
 }
 
