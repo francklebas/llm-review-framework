@@ -47,13 +47,17 @@ prompt_choice() {
             fi
         done
 
-        # Read single keypress
+        # Read keypress (arrow keys send 3-char escape sequence: \033 [ A/B)
         IFS= read -rsn1 key
+        if [[ "$key" == $'\033' ]]; then
+            IFS= read -rsn2 -t 0.1 rest
+            key+="$rest"
+        fi
         case "$key" in
-            A|k) # Up arrow or k
+            $'\033[A'|k) # Up arrow or k
                 ((selected > 0)) && ((selected--))
                 ;;
-            B|j) # Down arrow or j
+            $'\033[B'|j) # Down arrow or j
                 ((selected < count - 1)) && ((selected++))
                 ;;
             '') # Enter
