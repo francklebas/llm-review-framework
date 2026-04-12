@@ -33,18 +33,14 @@ prompt_choice() {
     for i in "${!options[@]}"; do
         printf "  ${CYAN}%d)${NC} %s\n" "$((i + 1))" "${options[$i]}" >/dev/tty
     done
+    printf "${BOLD}Choice [1-%d]:${NC} " "$count" >/dev/tty
     while true; do
-        printf "${BOLD}Choice [1-%d]:${NC} " "$count" >/dev/tty
-        # Read silently to prevent escape sequences showing on screen
-        read -rs choice </dev/tty
-        # Strip anything that isn't a digit
-        choice=$(printf '%s' "$choice" | tr -cd '0-9')
-        # Echo back the clean input
-        printf "%s\n" "$choice" >/dev/tty
-        if [ -n "$choice" ] && [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le "$count" ] 2>/dev/null; then
+        # Single char, silent — arrow keys and non-digits are silently ignored
+        read -rsn1 choice </dev/tty
+        if [[ "$choice" =~ ^[0-9]$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "$count" ]; then
+            printf "%s\n" "$choice" >/dev/tty
             break
         fi
-        printf "  ${RED}Enter a number between 1 and %d${NC}\n" "$count" >/dev/tty
     done
 
     CHOICE_INDEX=$((choice - 1))
