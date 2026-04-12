@@ -5,7 +5,7 @@ LLM-powered code review as a pre-commit hook. Works with any LLM provider, any p
 ## Install
 
 ```bash
-curl -fsSL https://francklebas.com/llm-review | bash
+curl -fsSL https://raw.githubusercontent.com/francklebas/llm-review-framework/main/install.sh | bash
 ```
 
 ## Setup a project
