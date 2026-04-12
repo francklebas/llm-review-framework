@@ -83,11 +83,11 @@ prompt_input() {
     local result
 
     if [ -n "$default" ]; then
-        echo -en "${BOLD}${question}${NC} ${DIM}[${default}]${NC}: "
+        echo -en "${BOLD}${question}${NC} ${DIM}[${default}]${NC}: " >/dev/tty
     else
-        echo -en "${BOLD}${question}${NC}: "
+        echo -en "${BOLD}${question}${NC}: " >/dev/tty
     fi
-    read -r result
+    read -r result </dev/tty
     echo "${result:-$default}"
 }
 
@@ -97,11 +97,11 @@ prompt_yn() {
     local result
 
     if [ "$default" = "y" ]; then
-        echo -en "${BOLD}${question}${NC} ${DIM}[Y/n]${NC}: "
+        echo -en "${BOLD}${question}${NC} ${DIM}[Y/n]${NC}: " >/dev/tty
     else
-        echo -en "${BOLD}${question}${NC} ${DIM}[y/N]${NC}: "
+        echo -en "${BOLD}${question}${NC} ${DIM}[y/N]${NC}: " >/dev/tty
     fi
-    read -r result
+    read -r result </dev/tty
     result="${result:-$default}"
     [[ "$result" =~ ^[Yy] ]]
 }
