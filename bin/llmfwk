@@ -205,6 +205,25 @@ declare -A PROVIDER_LABELS=(
 provider_models() {
     case "$1" in
         gemini)
+            if check_command gemini; then
+                local raw_output
+                raw_output=$(gemini --list-models 2>&1) || true
+                
+                # Extract and display system messages (DX) to stderr
+                echo "$raw_output" | grep -iE "policy|update|notice|new model|version" | while read -r line; do
+                    echo -e "${YELLOW}!${NC} ${DIM}$line${NC}" >&2
+                done
+
+                # Extract models (e.g., gemini-1.5-flash)
+                local models
+                models=$(echo "$raw_output" | grep -E "^gemini-[a-z0-9.-]+" | awk '{print $1"|Model available via Gemini CLI"}')
+                
+                if [ -n "$models" ]; then
+                    echo "$models"
+                    return
+                fi
+            fi
+            # Fallback
             echo "gemini-2.5-flash-lite|fast, free tier"
             echo "gemini-2.5-flash|balanced"
             echo "gemini-2.5-pro|best quality"

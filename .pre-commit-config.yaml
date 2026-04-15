@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: llm-codereview
+        name: LLM Code Review
+        entry: llm-codereview
+        language: system
+        pass_filenames: true
+        stages: [pre-commit]

@@ -1,0 +1,5 @@
+# llm-review-framework configuration
+# https://github.com/francklebas/llm-review-framework
+provider: gemini
+model: gemini-2.5-flash-lite
+prompts_dir: ~/.llmfwk/prompts/projects
